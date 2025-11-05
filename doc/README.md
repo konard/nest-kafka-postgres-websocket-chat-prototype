@@ -1,246 +1,353 @@
-# Документация проекта WebChat
+# Technical Documentation - Real-time Chat System
 
-Полная техническая документация проекта чата на NestJS + Kafka + PostgreSQL + WebSocket.
+Comprehensive technical documentation for the open-source, enterprise-grade chat application built with event-driven architecture.
 
-## 📚 Содержание документации
+> **Note**: This is an open-source project. The architecture is designed to be flexible and can be integrated with any backend system via Kafka events or REST API.
 
-### Основные документы
+## 📚 Documentation Structure
 
-| Документ | Описание | Статус |
-|----------|----------|--------|
-| [kafka.md](./kafka.md) | Apache Kafka подсистема и интеграция | ✅ Обновлено |
-| [nest.md](./nest.md) | NestJS архитектура и модули | ✅ Обновлено |
-| [next.md](./next.md) | Next.js фронтенд и компоненты | ✅ Обновлено |
-| [postgres.md](./postgres.md) | PostgreSQL схема и работа с БД | ✅ Обновлено |
-| [websocket.md](./websocket.md) | WebSocket события и real-time коммуникация | ✅ Обновлено |
+### Core Documentation
 
-### Справочные документы
+| Document | Description | Status |
+|----------|-------------|--------|
+| [PROJECT_PURPOSE.md](./PROJECT_PURPOSE.md) | Project vision, use cases, and architecture overview | ✅ Complete |
+| [kafka.md](./kafka.md) | Apache Kafka integration and event-driven architecture | ✅ Complete |
+| [nest.md](./nest.md) | NestJS backend architecture and modules | ✅ Complete |
+| [next.md](./next.md) | Next.js frontend and components | ✅ Complete |
+| [postgres.md](./postgres.md) | PostgreSQL database schema and operations | ✅ Complete |
+| [websocket.md](./websocket.md) | WebSocket events and real-time communication | ✅ Complete |
+| [redis.md](./redis.md) | Redis usage for caching and presence | ✅ Complete |
 
-| Документ | Описание |
-|----------|----------|
-| [API_REFERENCE.md](./API_REFERENCE.md) | Справочник по WebSocket API |
-| [CHANGELOG_DOCUMENTATION.md](./CHANGELOG_DOCUMENTATION.md) | История изменений документации |
+### API Reference
 
-## 🎯 Быстрый старт
+| Document | Description |
+|----------|-------------|
+| [API_REFERENCE.md](./API_REFERENCE.md) | Complete WebSocket and REST API reference |
 
-### Для разработчиков backend
+## 🎯 Quick Start
 
-1. **Архитектура приложения** → [nest.md](./nest.md)
-2. **WebSocket события** → [websocket.md](./websocket.md)
-3. **Работа с базой данных** → [postgres.md](./postgres.md)
-4. **Kafka интеграция** → [kafka.md](./kafka.md)
+### New to the Project?
 
-### Для разработчиков frontend
+Start here:
+1. **What & Why** → [PROJECT_PURPOSE.md](./PROJECT_PURPOSE.md) - Understanding the project purpose
+2. **Architecture** → [nest.md](./nest.md) - System overview and components
+3. **Getting Started** → [../README.md](../README.md) - Installation and setup
 
-1. **Подключение к WebSocket** → [API_REFERENCE.md](./API_REFERENCE.md)
-2. **SocketService** → [next.md](./next.md#socketservice)
-3. **События и типы** → [websocket.md](./websocket.md#список-всех-websocket-событий)
+### For Backend Developers
 
-## 📖 Основные разделы
+1. **Backend Architecture** → [nest.md](./nest.md)
+2. **WebSocket Events** → [websocket.md](./websocket.md)
+3. **Database Operations** → [postgres.md](./postgres.md)
+4. **Kafka Integration** → [kafka.md](./kafka.md)
+5. **Redis Usage** → [redis.md](./redis.md)
+
+### For Frontend Developers
+
+1. **Frontend Architecture** → [next.md](./next.md)
+2. **WebSocket API** → [API_REFERENCE.md](./API_REFERENCE.md)
+3. **SocketService Usage** → [next.md](./next.md#socketservice)
+4. **Event Types** → [websocket.md](./websocket.md)
+
+### For Integration & DevOps
+
+1. **Event-Driven Architecture** → [kafka.md](./kafka.md)
+2. **Scaling Considerations** → [PROJECT_PURPOSE.md](./PROJECT_PURPOSE.md#-scalability)
+3. **Docker Deployment** → [../docker-compose.yml](../docker-compose.yml)
+
+## 📖 Core Components
 
 ### 1. Apache Kafka ([kafka.md](./kafka.md))
 
-- ✅ Настройка и конфигурация KafkaAdapter
-- ✅ Публикация и подписка на сообщения
-- ✅ Retry стратегии и обработка ошибок
-- ⚠️ **Важно:** Kafka не используется напрямую в ChatService в текущей версии
+**Event-Driven Architecture:**
+- ✅ KafkaAdapter for broker connection
+- ✅ Producer/Consumer services with type safety
+- ✅ 21 Kafka topics for different event types
+- ✅ Retry strategies and error handling
+- ✅ Event sourcing and replay capability
 
-**Основные компоненты:**
-- KafkaAdapter - класс для работы с Kafka
-- Producer/Consumer конфигурация
-- Graceful shutdown
-- Потенциальное использование в будущем
+**Key Components:**
+- `KafkaAdapter` - Core Kafka client wrapper
+- `KafkaProducerService` - Type-safe event publishing
+- `KafkaConsumerService` - Event subscription and handling
+- `kafka.types.ts` - Event type definitions
+
+**Use Cases:**
+- Real-time analytics processing
+- Notification dispatch
+- Audit logging
+- External system integration
 
 ### 2. NestJS Backend ([nest.md](./nest.md))
 
-- ✅ Модульная архитектура
-- ✅ Dependency Injection
-- ✅ AuthModule с JWT
-- ✅ ChatModule с полным CRUD
-- ✅ SocketModule для WebSocket
-- ✅ Health checks и мониторинг
+**Modular Architecture:**
+- ✅ Dependency Injection pattern
+- ✅ AuthModule with JWT authentication
+- ✅ ChatModule with full CRUD operations
+- ✅ SocketModule for WebSocket gateway
+- ✅ Health checks and monitoring
+- ✅ Global exception filters
 
-**Основные модули:**
-- AuthModule - JWT аутентификация
-- UserModule - управление пользователями
-- ChatModule - функциональность чата
-- SocketModule - WebSocket gateway
+**Core Modules:**
+- `AuthModule` - JWT authentication and authorization
+- `UserModule` - User management and presence
+- `ChatModule` - Chat and message functionality
+- `SocketModule` - Real-time WebSocket gateway
+- `KafkaModule` - Event-driven processing
 
-### 3. WebSocket Коммуникация ([websocket.md](./websocket.md))
+### 3. WebSocket Communication ([websocket.md](./websocket.md))
 
-**11 событий клиент → сервер:**
-- `message` - отправка сообщения
-- `chat:join` / `chat:leave` - управление комнатами
-- `message:read` - отметка прочитанного
-- `message:pin` / `message:unpin` - закрепление
-- `message:forward` - пересылка
-- И другие...
+**Client → Server Events (11 total):**
+- `message` - Send message
+- `chat:join` / `chat:leave` - Room management
+- `message:read` - Mark as read
+- `message:pin` / `message:unpin` - Pin/unpin
+- `message:forward` - Forward message
+- And more...
 
-**7 событий сервер → клиент:**
-- `message` - новое сообщение
-- `message:status` - обновление статуса
-- `users:update` - статус пользователя
-- И другие...
+**Server → Client Events (7 total):**
+- `message` - New message broadcast
+- `message:status` - Delivery status update
+- `users:update` - User presence update
+- And more...
 
-**Ключевые функции:**
-- Автоматическое определение статуса доставки
-- Поддержка множественных соединений
-- Graceful shutdown
-- Автоматическая очистка мертвых соединений
+**Key Features:**
+- Automatic delivery status tracking
+- Multiple connections per user
+- Graceful shutdown handling
+- Dead connection cleanup
+- Redis adapter for multi-instance sync
 
-### 4. PostgreSQL База данных ([postgres.md](./postgres.md))
+### 4. PostgreSQL Database ([postgres.md](./postgres.md))
 
-**Основные таблицы:**
-- `users` - пользователи и аутентификация
-- `chats` - чаты и участники
-- `messages` - сообщения с расширенными функциями
+**Database Schema:**
+- `users` - User accounts and authentication
+- `chats` - Chat rooms and participants
+- `messages` - Messages with extended features
 
-**Функции Message Entity:**
-- Статусы доставки (SENT / DELIVERED / READ)
-- Закрепление сообщений (isPinned, pinnedAt, pinnedBy)
-- Пересылка сообщений (isForwarded, forwardedFromId, originalSenderId)
+**Message Entity Features:**
+- Delivery status (SENT / DELIVERED / READ)
+- Message pinning (isPinned, pinnedAt, pinnedBy)
+- Message forwarding (isForwarded, forwardedFromId, originalSenderId)
+- Soft delete support
+- Timestamp tracking
 
-### 5. Next.js Frontend ([next.md](./next.md))
+### 5. Redis ([redis.md](./redis.md))
 
-**Компоненты:**
-- Chat - основной компонент чата
-- UsersList - список пользователей
-- UserStatus - индикатор статуса
+**Redis Use Cases:**
+- ✅ User presence tracking (online/offline)
+- ✅ Socket.IO adapter (multi-instance sync)
+- ✅ Rate limiting (anti-spam)
+- ✅ Message caching (performance)
+- ✅ Session management
 
-**Сервисы:**
-- SocketService (Singleton) - управление WebSocket
-- Автоматическое переподключение
-- Обработка истечения сессии
+**Key Services:**
+- `RedisService` - Core Redis client wrapper
+- `UserPresenceService` - Online/offline tracking
+- `MessageCacheService` - Message caching
+- `RedisThrottlerGuard` - Rate limiting
 
-## 🔍 Поиск информации
+### 6. Next.js Frontend ([next.md](./next.md))
 
-### Как найти нужную информацию?
+**UI Components:**
+- Chat - Main chat interface
+- UsersList - Online users display
+- UserStatus - Presence indicators
+- MessageList - Message rendering
 
-**Вопрос:** Как отправить сообщение?
-→ [API_REFERENCE.md - Отправка сообщения](./API_REFERENCE.md#отправка-сообщения)
+**Services:**
+- `SocketService` - Singleton WebSocket manager
+- Auto-reconnection on disconnect
+- Token expiration handling
+- Event queue management
 
-**Вопрос:** Как работает статус доставки?
-→ [websocket.md - Отправка сообщения](./websocket.md#отправка-сообщения)
+## 🔍 Finding Information
 
-**Вопрос:** Как закрепить сообщение?
-→ [API_REFERENCE.md - Закрепление](./API_REFERENCE.md#закрепление-сообщений)
+### Quick Reference by Topic:
 
-**Вопрос:** Какие поля есть в Message?
-→ [postgres.md - Message Entity](./postgres.md#message-entity-сообщения)
+**Q:** How to send a message?
+→ [API_REFERENCE.md - Sending Messages](./API_REFERENCE.md)
 
-**Вопрос:** Как подключиться к WebSocket?
-→ [API_REFERENCE.md - Подключение](./API_REFERENCE.md#подключение)
+**Q:** How does delivery status work?
+→ [websocket.md - Message Delivery](./websocket.md)
 
-## ⚡ Реализованные функции
+**Q:** How to pin a message?
+→ [API_REFERENCE.md - Message Pinning](./API_REFERENCE.md)
 
-### ✅ Полностью реализовано
+**Q:** What fields does Message entity have?
+→ [postgres.md - Message Entity](./postgres.md)
 
-- [x] User Authentication & Registration
-- [x] User Presence Management
-- [x] Real-Time Messaging
-- [x] Message Delivery Status (SENT/DELIVERED/READ)
-- [x] Chat Room Management
-- [x] WebSocket Integration
-- [x] Message Pinning
-- [x] Message Forwarding
+**Q:** How to connect to WebSocket?
+→ [API_REFERENCE.md - Connection](./API_REFERENCE.md)
 
-### 🚧 В разработке
+**Q:** How to integrate with external system?
+→ [kafka.md - Kafka Integration](./kafka.md)
 
-См. [../README.md](../README.md#todo-missing-chat-scenarios) для полного списка планируемых функций.
+**Q:** How to scale the application?
+→ [PROJECT_PURPOSE.md - Scalability](./PROJECT_PURPOSE.md)
 
-## 📊 Архитектурные диаграммы
+## ⚡ Implemented Features
 
-### Поток сообщения
+### ✅ Core Features (Complete)
+
+- [x] **User Authentication & Registration** - JWT-based auth
+- [x] **User Presence Management** - Redis-backed online/offline tracking
+- [x] **Real-Time Messaging** - WebSocket with Socket.IO
+- [x] **Message Delivery Status** - Three-state delivery (SENT/DELIVERED/READ)
+- [x] **Chat Room Management** - Create, join, leave rooms
+- [x] **WebSocket Integration** - Full bidirectional communication
+- [x] **Message Pinning** - Pin important messages
+- [x] **Message Forwarding** - Forward messages to other chats
+- [x] **Event-Driven Architecture** - Kafka for async processing
+- [x] **Rate Limiting** - Redis-based request throttling
+- [x] **Analytics & Audit** - Event logging via Kafka
+- [x] **Horizontal Scalability** - Redis adapter for Socket.IO
+
+### 🚧 Planned Features
+
+See [../README.md](../README.md#todo-missing-chat-scenarios) for the complete roadmap.
+
+## 📊 Architecture Diagrams
+
+### Message Flow (Event-Driven)
 
 ```
-┌─────────┐     WebSocket      ┌──────────────┐
-│ Client  │ ──────────────────> │ SocketGateway│
-└─────────┘    'message' event  └──────┬───────┘
-                                       │
-                                       ↓
-                                ┌──────────────┐
-                                │ ChatService  │
-                                └──────┬───────┘
-                                       │
-                                       ↓
-                                ┌──────────────┐
-                                │  PostgreSQL  │
-                                └──────────────┘
+┌─────────┐   WebSocket   ┌──────────────┐
+│ Client  │ ────────────> │SocketGateway │
+└─────────┘               └──────┬───────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    ↓            ↓            ↓
+             ┌────────────┐ ┌────────┐ ┌────────────┐
+             │ChatService │ │ Kafka  │ │  Broadcast │
+             └──────┬─────┘ └───┬────┘ └────────────┘
+                    ↓           ↓
+             ┌────────────┐ ┌────────────┐
+             │PostgreSQL  │ │ Consumers  │
+             └────────────┘ └────────────┘
+                              (Analytics,
+                               Audit, etc.)
 ```
 
-### Статус доставки
+### Delivery Status Flow
 
 ```
-SENT ──────> DELIVERED ──────> READ
- ↓             ↓                 ↓
-Server     Recipient         Recipient
-receives   opens chat        clicks message
+SENT ──────────> DELIVERED ──────────> READ
+ ↓                  ↓                    ↓
+Server         Recipient            Recipient
+receives       connects             clicks message
+message        to WebSocket         to mark as read
 ```
 
-## 🔧 Технический стек
+### Horizontal Scaling
 
-- **Backend:** NestJS 10.x, TypeORM, Socket.IO
-- **Frontend:** Next.js 14.x, React 19, Socket.IO Client
+```
+┌──────────┐   ┌──────────┐   ┌──────────┐
+│Backend #1│   │Backend #2│   │Backend #3│
+└────┬─────┘   └────┬─────┘   └────┬─────┘
+     │              │              │
+     └──────────────┼──────────────┘
+                    │
+              ┌─────▼─────┐
+              │   Redis   │  ← Socket.IO Adapter
+              │  Adapter  │     syncs connections
+              └───────────┘
+```
+
+## 🔧 Technology Stack
+
+### Backend
+- **Framework:** NestJS 10.x
+- **Database ORM:** TypeORM
+- **WebSocket:** Socket.IO
+- **Message Queue:** Apache Kafka
+- **Cache:** Redis
+- **Auth:** JWT
+
+### Frontend
+- **Framework:** Next.js 14.x (App Router)
+- **UI Library:** React 19
+- **WebSocket Client:** Socket.IO Client
+- **Styling:** Tailwind CSS
+- **State:** React Hooks + Context
+
+### Infrastructure
 - **Database:** PostgreSQL 16
-- **Message Queue:** Apache Kafka (готов к использованию)
-- **Real-time:** WebSocket (Socket.IO)
+- **Cache/Presence:** Redis 7
+- **Message Broker:** Apache Kafka + Zookeeper
+- **Containerization:** Docker + Docker Compose
 
-## 📝 Соглашения
+## 📝 Conventions
 
-### Именование событий WebSocket
+### WebSocket Event Naming
 
-- **Действия:** `глагол` (например: `message`, `users:list`)
-- **Управление комнатами:** `объект:действие` (например: `chat:join`, `chat:leave`)
-- **Операции с сообщениями:** `message:действие` (например: `message:read`, `message:pin`)
+- **Actions:** `verb` (e.g., `message`, `users:list`)
+- **Room Management:** `object:action` (e.g., `chat:join`, `chat:leave`)
+- **Message Operations:** `message:action` (e.g., `message:read`, `message:pin`)
 
-### Статусы ответов
+### Response Format
 
-Все события с callback возвращают:
+All events with callbacks return:
 ```typescript
 {
   status: 'ok' | 'error',
-  message?: any | string,  // данные или сообщение об ошибке
-  messages?: any[]         // для множественных результатов
+  message?: any | string,  // Data or error message
+  messages?: any[]         // For multiple results
 }
 ```
 
-## 🐛 Известные ограничения
+### Kafka Event Naming
 
-1. **Kafka интеграция:** KafkaAdapter реализован, но не используется в ChatService
-2. **Typing indicators:** Не реализовано (было в старой документации)
-3. **Group chats:** Пока только чаты между двумя пользователями
-4. **File attachments:** Только текстовые сообщения
+- **Dot notation:** `entity.action` (e.g., `message.created`, `user.online`)
+- **Hierarchical:** `category.entity.action` (e.g., `analytics.message`)
 
-## 📅 История обновлений
+## 🐛 Current Limitations
 
-**5 ноября 2025:**
-- ✅ Полная ревизия всей документации
-- ✅ Исправлены все несоответствия с кодом
-- ✅ Добавлен API_REFERENCE.md
-- ✅ Обновлены все ссылки на строки кода
-- ✅ Добавлено описание функций pin/forward
+1. **Group chats:** Currently only 1-on-1 chats (group chat planned)
+2. **File attachments:** Text-only messages (media support planned)
+3. **Typing indicators:** Not implemented yet (planned)
+4. **Message editing:** Not implemented yet (planned)
+5. **End-to-end encryption:** Not implemented (planned for future)
 
-См. [CHANGELOG_DOCUMENTATION.md](./CHANGELOG_DOCUMENTATION.md) для детального списка изменений.
+## 📅 Update History
 
-## 🤝 Вклад в документацию
+**November 5, 2025:**
+- ✅ Complete documentation revision
+- ✅ Fixed all code inconsistencies
+- ✅ Added API_REFERENCE.md
+- ✅ Updated all code line references
+- ✅ Added pin/forward feature descriptions
+- ✅ Added PROJECT_PURPOSE.md for project vision
+- ✅ Transitioned to open-source documentation style
 
-При обновлении кода, пожалуйста:
+## 🤝 Contributing to Documentation
 
-1. Обновите соответствующий .md файл
-2. Проверьте ссылки на номера строк
-3. Добавьте новые события в API_REFERENCE.md
-4. Обновите CHANGELOG_DOCUMENTATION.md
+When updating code, please:
 
-## 📮 Контакты
+1. Update the corresponding .md file
+2. Check code line references
+3. Add new events to API_REFERENCE.md
+4. Keep documentation in sync with implementation
 
-Для вопросов по документации:
-- Создайте Issue в репозитории
-- Проверьте существующую документацию
-- Посмотрите примеры в API_REFERENCE.md
+## 📮 Support
+
+For questions about the project:
+- Create an Issue in the repository
+- Check existing documentation
+- Review examples in API_REFERENCE.md
+- Join discussions
+
+## 🌟 Community
+
+This is an open-source project. We welcome:
+- 🐛 Bug reports
+- 💡 Feature suggestions
+- 📝 Documentation improvements
+- 🔧 Code contributions
+- ⭐ Stars and feedback
 
 ---
 
-**Последнее обновление:** 5 ноября 2025
-**Версия документации:** 2.0
-**Соответствие коду:** ✅ 100%
+**Last Updated:** November 5, 2025
+**Documentation Version:** 2.0 (Open Source)
+**Code Accuracy:** ✅ 100%
 

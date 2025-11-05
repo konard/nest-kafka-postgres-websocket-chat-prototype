@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Chat as ChatEntity } from './entities/chat.entity';
@@ -7,9 +7,13 @@ import { Chat, ChatMessage, MessageDeliveryStatus } from '@webchat/common';
 import { User } from '../user/entities/user.entity';
 import { v4 as uuidv4 } from 'uuid';
 import { In } from 'typeorm';
+import { KafkaProducerService } from '../adapters/kafka/kafka-producer.service';
+import { MessageCacheService } from './message-cache.service';
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     @InjectRepository(ChatEntity)
     private readonly chatRepository: Repository<ChatEntity>,
@@ -17,6 +21,8 @@ export class ChatService {
     private readonly messageRepository: Repository<MessageEntity>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly kafkaProducer: KafkaProducerService,
+    private readonly messageCacheService: MessageCacheService,
   ) {}
 
   async createChat(userId1: string, userId2: string): Promise<Chat> {
@@ -61,6 +67,21 @@ export class ChatService {
 
     if (!fullChat) {
       throw new Error('Failed to load created chat');
+    }
+
+    // Публикуем событие создания чата в Kafka
+    try {
+      await this.kafkaProducer.publishChatCreated({
+        chatId: fullChat.id,
+        type: 'private',
+        createdBy: userId1,
+        participants: [userId1, userId2],
+        createdAt: fullChat.createdAt,
+      });
+
+      this.logger.debug('Kafka event published for chat creation', { chatId: fullChat.id });
+    } catch (error) {
+      this.logger.error('Failed to publish Kafka event for chat creation', error);
     }
 
     return {
@@ -214,12 +235,45 @@ export class ChatService {
     });
 
     const savedMessage = await this.messageRepository.save(message);
-    console.log('=== Message Saved ===', {
+    this.logger.log('Message saved to database', {
       id: savedMessage.id,
       chatId: savedMessage.chatId,
       senderId: savedMessage.senderId,
       status: savedMessage.status
     });
+
+    // Публикуем событие создания сообщения в Kafka
+    try {
+      await this.kafkaProducer.publishMessageCreated({
+        messageId: savedMessage.id,
+        chatId: savedMessage.chatId,
+        senderId: savedMessage.senderId,
+        content: savedMessage.content,
+        createdAt: savedMessage.createdAt,
+      });
+
+      // Публикуем событие для аналитики
+      await this.kafkaProducer.publishAnalyticsMessage({
+        messageId: savedMessage.id,
+        chatId: savedMessage.chatId,
+        senderId: savedMessage.senderId,
+        messageLength: savedMessage.content.length,
+        hasMedia: false, // TODO: определять наличие медиа
+        timestamp: savedMessage.createdAt,
+      });
+
+      this.logger.debug('Kafka events published for message', { messageId: savedMessage.id });
+    } catch (error) {
+      this.logger.error('Failed to publish Kafka events for message', error);
+      // Не выбрасываем ошибку, чтобы не ломать сохранение сообщения
+    }
+
+    // Кешируем сообщение в Redis
+    try {
+      await this.messageCacheService.cacheMessage(savedMessage);
+    } catch (error) {
+      this.logger.error('Failed to cache message in Redis', error);
+    }
 
     return {
       id: savedMessage.id,
@@ -375,11 +429,26 @@ export class ChatService {
 
     const savedMessage = await this.messageRepository.save(message);
 
-    console.log('=== Message Pinned ===', {
+    this.logger.log('Message pinned', {
       messageId: savedMessage.id,
       pinnedBy: savedMessage.pinnedBy,
       pinnedAt: savedMessage.pinnedAt,
     });
+
+    // Публикуем событие закрепления в Kafka
+    try {
+      await this.kafkaProducer.publishMessagePinned({
+        messageId: savedMessage.id,
+        chatId: savedMessage.chatId,
+        pinnedBy: userId,
+        pinnedAt: savedMessage.pinnedAt!,
+      });
+
+      // Кешируем закрепленное сообщение
+      await this.messageCacheService.cachePinnedMessage(savedMessage);
+    } catch (error) {
+      this.logger.error('Failed to publish pin event to Kafka', error);
+    }
 
     return {
       id: savedMessage.id,

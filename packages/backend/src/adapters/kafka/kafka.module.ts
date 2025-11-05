@@ -1,7 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { KafkaAdapter } from './kafka.adapter';
+import { KafkaProducerService } from './kafka-producer.service';
+import { KafkaConsumerService } from './kafka-consumer.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
+@Global()
 @Module({
   imports: [ConfigModule],
   providers: [
@@ -17,7 +20,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       },
       inject: [ConfigService],
     },
+    KafkaProducerService,
+    KafkaConsumerService,
   ],
-  exports: [KafkaAdapter],
+  exports: [KafkaAdapter, KafkaProducerService, KafkaConsumerService],
 })
 export class KafkaModule {}

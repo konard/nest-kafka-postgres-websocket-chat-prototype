@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { AuthService } from '../auth/auth.service';
 import { ChatService } from '../chat/chat.service';
 import { UserPresenceService } from '../user/user-presence.service';
+import { KafkaProducerService } from '../adapters/kafka/kafka-producer.service';
 import { ChatMessage, MessageDeliveryStatus } from '@webchat/common';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
@@ -42,6 +43,7 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     private chatService: ChatService,
     private configService: ConfigService,
     private userPresenceService: UserPresenceService,
+    private kafkaProducer: KafkaProducerService,
   ) {}
 
   public async closeServer() {
@@ -214,6 +216,22 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       try {
         await this.userPresenceService.setOnline(user.id, client.id);
         this.logger.log(`User ${user.id} status set to online in Redis`);
+
+        // Публикуем событие подключения пользователя в Kafka
+        await this.kafkaProducer.publishUserOnline({
+          userId: user.id,
+          socketId: client.id,
+          connectedAt: new Date(),
+          ip: client.handshake.address,
+          userAgent: client.handshake.headers['user-agent'],
+        });
+
+        // Публикуем аналитику активности пользователя
+        await this.kafkaProducer.publishAnalyticsUserActivity({
+          userId: user.id,
+          activityType: 'login',
+          timestamp: new Date(),
+        });
       } catch (error) {
         this.logger.error('Failed to set user online in Redis:', error);
       }
@@ -287,8 +305,27 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       // Устанавливаем статус оффлайн в Redis
       (async () => {
         try {
+          const connectedAt = clientInfo.lastActivity;
+          const sessionDuration = Date.now() - connectedAt.getTime();
+
           await this.userPresenceService.setOffline(clientInfo.userId, client.id);
           this.logger.log(`User ${clientInfo.userId} status updated in Redis`);
+
+          // Публикуем событие отключения пользователя в Kafka
+          await this.kafkaProducer.publishUserOffline({
+            userId: clientInfo.userId,
+            socketId: client.id,
+            disconnectedAt: new Date(),
+            sessionDuration,
+          });
+
+          // Публикуем аналитику активности
+          await this.kafkaProducer.publishAnalyticsUserActivity({
+            userId: clientInfo.userId,
+            activityType: 'logout',
+            timestamp: new Date(),
+            metadata: { sessionDuration },
+          });
         } catch (error) {
           this.logger.error('Failed to set user offline in Redis:', error);
         }

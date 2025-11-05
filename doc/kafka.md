@@ -278,50 +278,148 @@ async subscribe<T>(topic: string, handler: (message: T) => Promise<void>): Promi
 
 ### Текущий статус интеграции
 
-> ⚠️ **Важно:** В текущей реализации проекта Kafka **НЕ используется напрямую в ChatService**. 
-> Сообщения обрабатываются через Socket.IO и сохраняются непосредственно в PostgreSQL.
+> ✅ **Kafka полностью интегрирован и используется для event-driven архитектуры!**
+
+### Event-Driven Architecture
+
+Kafka используется для публикации и обработки событий в реальном времени:
+
+#### Реализованные компоненты:
+
+1. **KafkaProducerService** (`kafka-producer.service.ts`)
+   - Публикация событий в различные topics
+   - Type-safe методы для каждого типа события
+   - Graceful degradation при недоступности Kafka
+
+2. **KafkaConsumerService** (`kafka-consumer.service.ts`)
+   - Подписка на events и их обработка
+   - Extensible архитектура для регистрации handlers
+   - Автоматическое переподключение при сбоях
+
+3. **Kafka Types** (`kafka.types.ts`)
+   - 21 topic для различных событий
+   - Type-safe интерфейсы для всех событий
+   - Helpers для создания событий
 
 ### Архитектура обработки сообщений
 
-В текущей версии приложения:
-1. **Клиент** отправляет сообщение через WebSocket (Socket.IO)
-2. **SocketGateway** принимает сообщение и вызывает `ChatService.saveMessage()`
-3. **ChatService** сохраняет сообщение в PostgreSQL
-4. **SocketGateway** рассылает сообщение всем участникам чата через Socket.IO
+**Текущий workflow:**
 
-### Потенциальное использование Kafka
+```
+1. Client → WebSocket → SocketGateway
+2. SocketGateway → ChatService.saveMessage()
+3. ChatService:
+   ├─→ PostgreSQL (сохранение)
+   ├─→ KafkaProducer.publishMessageCreated() (async)
+   ├─→ KafkaProducer.publishAnalyticsMessage() (async)
+   └─→ MessageCacheService.cacheMessage() (Redis)
+4. SocketGateway → Broadcast to participants (Socket.IO)
+5. KafkaConsumer → Process events:
+   ├─→ Analytics processing
+   ├─→ Notifications
+   └─→ Audit logging
+```
 
-KafkaAdapter готов к использованию и может быть интегрирован для:
-- Асинхронной обработки сообщений
-- Масштабирования системы на несколько инстансов
-- Event sourcing и audit log
-- Интеграции с внешними системами
+### Kafka Topics
 
-**Пример возможной интеграции:**
+#### Message Events
+- `message.created` - новое сообщение
+- `message.updated` - обновление сообщения
+- `message.deleted` - удаление сообщения
+- `message.pinned` - закрепление сообщения
+- `message.unpinned` - открепление сообщения
+- `message.forwarded` - пересылка сообщения
+- `message.read` - прочтение сообщения
+
+#### Chat Events
+- `chat.created` - создание чата
+- `chat.updated` - обновление чата
+- `chat.deleted` - удаление чата
+- `user.joined.chat` - пользователь присоединился к чату
+- `user.left.chat` - пользователь покинул чат
+
+#### User Events
+- `user.online` - пользователь онлайн
+- `user.offline` - пользователь оффлайн
+- `user.typing` - пользователь печатает
+
+#### Analytics Events
+- `analytics.message` - аналитика сообщений
+- `analytics.user.activity` - активность пользователей
+- `analytics.chat.activity` - активность чатов
+
+#### System Events
+- `notification.send` - отправка уведомления
+- `notification.batch` - пакетные уведомления
+- `audit.log` - логирование действий
+- `system.health` - состояние системы
+
+### Примеры использования
+
+#### Публикация событий в ChatService
 
 ```typescript
-// В ChatService можно добавить:
-async sendMessageWithKafka(message: ChatMessage): Promise<void> {
-  // Сохраняем в БД
-  await this.saveMessage(message);
+async saveMessage(dto: ChatMessage): Promise<ChatMessage> {
+  // Сохранение в PostgreSQL
+  const message = await this.messageRepository.save(dto);
   
-  // Отправляем в Kafka для дополнительной обработки
-  await this.kafkaAdapter.publish('chat-messages', {
+  // Публикация события создания сообщения
+  await this.kafkaProducer.publishMessageCreated({
     messageId: message.id,
     chatId: message.chatId,
     senderId: message.senderId,
     content: message.content,
+    createdAt: message.createdAt,
+  });
+  
+  // Публикация аналитики
+  await this.kafkaProducer.publishAnalyticsMessage({
+    messageId: message.id,
+    chatId: message.chatId,
+    senderId: message.senderId,
+    messageLength: message.content.length,
+    hasMedia: false,
     timestamp: message.createdAt,
   });
+  
+  // Кеширование в Redis
+  await this.messageCacheService.cacheMessage(message);
+  
+  return message;
+}
+```
+
+#### Обработка событий в KafkaConsumerService
+
+```typescript
+private async handleMessageCreated(event: MessageCreatedEvent): Promise<void> {
+  this.logger.log(`Message created: ${event.data.messageId}`);
+  
+  // Здесь можно добавить:
+  // - Отправку уведомлений
+  // - Обновление счетчиков
+  // - Индексацию для поиска
+  // - Обработку медиа-контента
 }
 
-// Подписка на события
-async onModuleInit() {
-  await this.kafkaAdapter.subscribe('chat-messages', async (message) => {
-    // Дополнительная обработка (аналитика, уведомления и т.д.)
-    this.logger.log(`Processing message from Kafka: ${message.messageId}`);
-  });
+private async handleAnalyticsMessage(event: AnalyticsMessageEvent): Promise<void> {
+  // Сохранение в аналитическую БД (ClickHouse, TimescaleDB)
+  // Обновление метрик в реальном времени
+  // Отправка в систему мониторинга
 }
+```
+
+#### Регистрация custom handlers
+
+```typescript
+// Другие сервисы могут регистрировать свои handlers
+kafkaConsumerService.registerHandler(
+  KafkaTopic.MESSAGE_CREATED,
+  async (event: MessageCreatedEvent) => {
+    // Custom обработка
+    await myCustomService.processMessage(event.data);
+  }
+);
 ```
 
 ## Топики Kafka
