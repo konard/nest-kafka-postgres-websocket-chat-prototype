@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserService } from './user.service';
 import { UserController } from './user.controller';
 import { UserGateway } from './user.gateway';
+import { UserPresenceService } from './user-presence.service';
 import { User } from './entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -14,8 +15,8 @@ import { JwtModule } from '@nestjs/jwt';
       signOptions: { expiresIn: '1d' },
     }),
   ],
-  providers: [UserService, UserGateway],
+  providers: [UserService, UserGateway, UserPresenceService],
   controllers: [UserController],
-  exports: [UserService, TypeOrmModule.forFeature([User]), JwtModule],
+  exports: [UserService, UserPresenceService, TypeOrmModule.forFeature([User]), JwtModule],
 })
 export class UserModule {}

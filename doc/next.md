@@ -72,44 +72,57 @@ Root layout определяет общую структуру всех стра
 
 ### SocketService
 
-**Файл:** `packages/frontend/src/app/services/socketService.ts:1-200`
+**Файл:** `packages/frontend/src/app/services/socketService.ts:1-170`
 
-Централизованный сервис для управления WebSocket соединениями:
+Централизованный сервис для управления WebSocket соединениями (Singleton паттерн):
+
+**Основные методы:**
+- `connect(token: string): Socket` - подключение с JWT токеном
+- `disconnect(): void` - отключение от сервера
+- `getSocket(): Socket | null` - получение socket.io клиента для отправки/получения событий
+- `isConnected(): boolean` - проверка статуса подключения
+- `reconnect(): void` - переподключение с сохраненным токеном
+
+**Особенности реализации:**
+- Singleton паттерн - один экземпляр на всё приложение
+- Автоматическое переподключение с экспоненциальной задержкой
+- Обработка истечения сессии (User not found) с редиректом на login
+- Настройка таймаутов и количества попыток переподключения
+- Логирование всех событий подключения/отключения
 
 ```typescript
-class SocketService {
-  private socket: Socket | null = null;
-  private token: string | null = null;
-  private connectionTimeout: number = 15000;
-  private reconnectionAttempts: number = 3;
+// Использование в компонентах
+import socketService from '@/app/services/socketService';
 
-  // Настройка соединения (строки 17-41)
-  private setupSocketConnection(): Socket {
-    this.socket = io(this.backendUrl, {
-      auth: { token: this.token ? `Bearer ${this.token}` : null },
-      transports: ['websocket'],
-      timeout: this.connectionTimeout,
-      reconnection: true,
-      reconnectionAttempts: this.reconnectionAttempts,
-    });
-  }
+// Подключение
+const socket = socketService.connect(token);
 
-  // Подключение (строки 79-103)
-  async connect(token: string): Promise<void> {
-    this.token = token;
-    this.setupSocketConnection();
-  }
-
-  // Отправка сообщения (строки 130-140)
-  sendMessage(event: string, data: any): void {
-    this.socket?.emit(event, data);
-  }
-
-  // Подписка на события (строки 142-150)
-  on(event: string, callback: Function): void {
-    this.socket?.on(event, callback);
-  }
+// Получение socket для работы с событиями
+const socket = socketService.getSocket();
+if (socket) {
+  socket.emit('message', { chatId, content });
+  socket.on('message', handleNewMessage);
 }
+
+// Проверка статуса
+if (socketService.isConnected()) {
+  // Соединение активно
+}
+
+// Отключение
+socketService.disconnect();
+```
+
+**Обработка ошибок подключения:**
+```typescript
+// При ошибке "User not found" (истечение сессии):
+// 1. Отключается автопереподключение
+// 2. Очищается состояние (socket, token)
+// 3. Выполняется редирект на /login?reason=session_expired
+
+// При других ошибках:
+// - Выполняется до 3 попыток переподключения
+// - Задержка между попытками увеличивается экспоненциально (1s, 2s, 4s)
 ```
 
 ## State Management

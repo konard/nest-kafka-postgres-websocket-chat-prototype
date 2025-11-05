@@ -1,11 +1,13 @@
 import { Module, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { ChatModule } from './chat/chat.module';
 import { SocketModule } from './socket/socket.module';
 import { HealthModule } from './health/health.module';
+import { RedisModule } from './redis/redis.module';
 import { User } from './user/entities/user.entity';
 import { Chat } from './chat/entities/chat.entity';
 import { Message } from './chat/entities/message.entity';
@@ -13,6 +15,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { SocketGateway } from './socket/socket.gateway';
 import { KafkaAdapter } from './adapters/kafka/kafka.adapter';
+import { RedisService } from './redis/redis.service';
+import { RedisThrottlerGuard } from './common/guards/redis-throttler.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ShutdownService } from './common/services/shutdown.service';
@@ -41,6 +45,19 @@ import { ShutdownService } from './common/services/shutdown.service';
       }),
       inject: [ConfigService],
     }),
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60000, // 60 секунд
+        limit: 100, // 100 запросов
+      },
+      {
+        name: 'strict',
+        ttl: 60000,
+        limit: 10, // Для более строгих эндпоинтов
+      },
+    ]),
+    RedisModule,
     AuthModule,
     UserModule,
     ChatModule,
@@ -56,6 +73,10 @@ import { ShutdownService } from './common/services/shutdown.service';
     {
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RedisThrottlerGuard,
     },
     {
       provide: KafkaAdapter,
@@ -75,7 +96,8 @@ export class AppModule implements OnApplicationShutdown {
   constructor(
     private readonly dataSource: DataSource,
     private readonly socketGateway: SocketGateway,
-    private readonly kafkaAdapter: KafkaAdapter
+    private readonly kafkaAdapter: KafkaAdapter,
+    private readonly redisService: RedisService
   ) {}
 
   async onApplicationShutdown(signal?: string) {
@@ -88,6 +110,10 @@ export class AppModule implements OnApplicationShutdown {
       // Закрываем Kafka
       await this.kafkaAdapter.onModuleDestroy();
       console.log('Kafka connections closed');
+
+      // Закрываем Redis
+      await this.redisService.onModuleDestroy();
+      console.log('Redis connections closed');
 
       // Закрываем БД
       await this.dataSource.destroy();

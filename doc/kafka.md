@@ -53,10 +53,18 @@ kafka:
 **Файл:** `packages/backend/src/adapters/kafka/kafka.adapter.ts:10-48`
 
 ```typescript
+@Injectable()
 export class KafkaAdapter implements OnModuleInit, OnModuleDestroy {
+  private isShuttingDown = false;
   private producer: Producer;
   private consumer: Consumer;
   private readonly kafka: Kafka;
+  private isConsumerRunning = false;
+  private readonly logger = new Logger(KafkaAdapter.name);
+  private pendingSubscriptions: Array<{
+    topic: string;
+    handler: (message: any) => Promise<void>;
+  }> = [];
 
   constructor(config?: KafkaConfig) {
     this.kafka = new Kafka({
@@ -95,7 +103,7 @@ private readonly retryOptions: RetryOptions = {
 
 ### Жизненный цикл
 
-**Инициализация** (`packages/backend/src/adapters/kafka/kafka.adapter.ts:50-59`):
+**Инициализация** (`packages/backend/src/adapters/kafka/kafka.adapter.ts:50-58`):
 ```typescript
 async onModuleInit() {
   try {
@@ -113,20 +121,26 @@ async onModuleInit() {
 ```typescript
 async onModuleDestroy() {
   this.isShuttingDown = true;
+  try {
+    // Перестаем принимать новые сообщения
+    if (this.isConsumerRunning) {
+      await this.consumer.pause([{ topic: '*' }]);
+      this.logger.log('Consumer paused');
+    }
 
-  // Перестаем принимать новые сообщения
-  if (this.isConsumerRunning) {
-    await this.consumer.pause([{ topic: '*' }]);
+    // Ждем завершения текущих операций
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // Отключаем producer и consumer
+    await Promise.all([
+      this.producer.disconnect(),
+      this.consumer.disconnect()
+    ]);
+
+    this.logger.log('Successfully disconnected from Kafka');
+  } catch (error) {
+    this.logger.error('Error during graceful shutdown', error);
   }
-
-  // Ждем завершения текущих операций
-  await new Promise(resolve => setTimeout(resolve, 5000));
-
-  // Отключаем producer и consumer
-  await Promise.all([
-    this.producer.disconnect(),
-    this.consumer.disconnect()
-  ]);
 }
 ```
 
@@ -134,7 +148,7 @@ async onModuleDestroy() {
 
 ### Метод publish
 
-**Файл:** `packages/backend/src/adapters/kafka/kafka.adapter.ts:85-118`
+**Файл:** `packages/backend/src/adapters/kafka/kafka.adapter.ts:85-121`
 
 ```typescript
 async publish<T>(topic: string, message: T, retries = 3): Promise<void> {
@@ -142,23 +156,37 @@ async publish<T>(topic: string, message: T, retries = 3): Promise<void> {
     throw new Error('Service is shutting down');
   }
 
+  let lastError: Error = new Error('Failed to publish message');
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await this.producer.send({
         topic,
-        messages: [{
-          key: (message as any).id || (message as any).messageId,
-          value: JSON.stringify(message),
-        }],
+        messages: [
+          {
+            key: (message as any).id || (message as any).messageId,
+            value: JSON.stringify(message),
+          },
+        ],
       });
-
-      this.logger.log(`Message published to topic ${topic}`);
+      this.logger.debug(`Message published to topic ${topic}`, message);
       return;
     } catch (error) {
-      if (attempt === retries) throw lastError;
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      lastError = error as Error;
+      this.logger.error(
+        `Failed to publish message to topic ${topic} (attempt ${attempt}/${retries})`,
+        error
+      );
+
+      if (attempt < retries) {
+        // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
   }
+
+  throw lastError;
 }
 ```
 
@@ -166,99 +194,133 @@ async publish<T>(topic: string, message: T, retries = 3): Promise<void> {
 
 ### Метод subscribe
 
-**Файл:** `packages/backend/src/adapters/kafka/kafka.adapter.ts:120-180`
+**Файл:** `packages/backend/src/adapters/kafka/kafka.adapter.ts:123-205`
 
 ```typescript
-async subscribe(topic: string, handler: (message: any) => Promise<void>): Promise<void> {
-  // Сохраняем подписку для последующей обработки
-  this.pendingSubscriptions.push({ topic, handler });
-
-  if (!this.isConsumerRunning) {
-    await this.startConsumer();
-  } else {
-    await this.consumer.subscribe({ topic });
+async subscribe<T>(topic: string, handler: (message: T) => Promise<void>): Promise<void> {
+  if (this.isShuttingDown) {
+    throw new Error('Service is shutting down');
   }
-}
+  try {
+    // Добавляем подписку в очередь
+    this.pendingSubscriptions.push({ topic, handler });
+    this.logger.log(`Subscribing to topic ${topic}`);
 
-private async startConsumer(): Promise<void> {
-  // Подписываемся на все накопленные топики
-  for (const { topic } of this.pendingSubscriptions) {
-    await this.consumer.subscribe({ topic });
-  }
+    // Если consumer уже запущен, ничего не делаем
+    if (this.isConsumerRunning) {
+      this.logger.debug(`Consumer already running, subscription to ${topic} queued`);
+      return;
+    }
 
-  await this.consumer.run({
-    eachMessage: async ({ topic, partition, message }) => {
-      const handlers = this.pendingSubscriptions
-        .filter(sub => sub.topic === topic)
-        .map(sub => sub.handler);
+    // Подписываемся на топик
+    await this.consumer.subscribe({ topic, fromBeginning: true });
 
-      for (const handler of handlers) {
-        await handler(parsedMessage);
-      }
-    },
-  });
-
-  this.isConsumerRunning = true;
-}
-```
-
-## Использование в ChatService
-
-### Отправка сообщений в Kafka
-
-**Файл:** `packages/backend/src/chat/chat.service.ts:220-264`
-
-```typescript
-private async sendMessageToKafka(message: ChatMessage): Promise<void> {
-  const maxRetries = 3;
-  let lastError: Error;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      await this.kafkaAdapter.publish('chat-messages', {
-        messageId: message.id,
-        chatId: message.chatId,
-        senderId: message.sender.id,
-        content: message.content,
-        timestamp: message.timestamp,
+    // Запускаем consumer только один раз
+    if (!this.isConsumerRunning) {
+      this.isConsumerRunning = true;
+      await this.consumer.run({
+        autoCommit: true,
+        autoCommitInterval: 5000,
+        autoCommitThreshold: 100,
+        eachMessage: async ({ topic, partition, message }) => {
+          try {
+            const value = message.value?.toString();
+            if (value) {
+              const parsedMessage = JSON.parse(value);
+              // Находим соответствующий handler для топика
+              const subscription = this.pendingSubscriptions.find(sub => sub.topic === topic);
+              if (subscription) {
+                this.logger.debug(`Processing message from topic ${topic}`, {
+                  key: message.key?.toString(),
+                  partition,
+                  offset: message.offset,
+                });
+                await subscription.handler(parsedMessage);
+              }
+            }
+          } catch (error) {
+            this.logger.error(`Error processing message from topic ${topic}`, error);
+            // Не выбрасываем ошибку, чтобы не остановить обработку сообщений
+          }
+        },
       });
 
-      this.logger.log(`Message sent to Kafka: ${message.id}`);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
-  }
+      // Обработка ошибок consumer'а
+      this.consumer.on('consumer.crash', async (error) => {
+        this.logger.error('Consumer crashed', error);
+        this.isConsumerRunning = false;
+        // Пытаемся переподключиться
+        try {
+          await this.consumer.connect();
+          await this.subscribe(topic, handler);
+        } catch (reconnectError) {
+          this.logger.error('Failed to reconnect consumer', reconnectError);
+        }
+      });
 
-  throw new Error(`Failed to send message to Kafka after ${maxRetries} attempts`);
+      this.consumer.on('consumer.disconnect', () => {
+        this.logger.warn('Consumer disconnected');
+        this.isConsumerRunning = false;
+      });
+
+      this.consumer.on('consumer.connect', () => {
+        this.logger.log('Consumer connected');
+      });
+    }
+  } catch (error) {
+    this.logger.error(`Failed to subscribe to topic ${topic}`, error);
+    throw error;
+  }
 }
 ```
 
-### Обработка сообщений из Kafka
+## Использование Kafka в проекте
 
-**Файл:** `packages/backend/src/chat/chat.service.ts:45-65`
+### Текущий статус интеграции
+
+> ⚠️ **Важно:** В текущей реализации проекта Kafka **НЕ используется напрямую в ChatService**. 
+> Сообщения обрабатываются через Socket.IO и сохраняются непосредственно в PostgreSQL.
+
+### Архитектура обработки сообщений
+
+В текущей версии приложения:
+1. **Клиент** отправляет сообщение через WebSocket (Socket.IO)
+2. **SocketGateway** принимает сообщение и вызывает `ChatService.saveMessage()`
+3. **ChatService** сохраняет сообщение в PostgreSQL
+4. **SocketGateway** рассылает сообщение всем участникам чата через Socket.IO
+
+### Потенциальное использование Kafka
+
+KafkaAdapter готов к использованию и может быть интегрирован для:
+- Асинхронной обработки сообщений
+- Масштабирования системы на несколько инстансов
+- Event sourcing и audit log
+- Интеграции с внешними системами
+
+**Пример возможной интеграции:**
 
 ```typescript
+// В ChatService можно добавить:
+async sendMessageWithKafka(message: ChatMessage): Promise<void> {
+  // Сохраняем в БД
+  await this.saveMessage(message);
+  
+  // Отправляем в Kafka для дополнительной обработки
+  await this.kafkaAdapter.publish('chat-messages', {
+    messageId: message.id,
+    chatId: message.chatId,
+    senderId: message.senderId,
+    content: message.content,
+    timestamp: message.createdAt,
+  });
+}
+
+// Подписка на события
 async onModuleInit() {
   await this.kafkaAdapter.subscribe('chat-messages', async (message) => {
-    try {
-      this.logger.log(`Received message from Kafka: ${message.messageId}`);
-
-      // Обработка сообщения
-      await this.processKafkaMessage(message);
-
-      // Отправка через WebSocket
-      this.socketGateway.sendToChat(message.chatId, 'new-message', message);
-
-    } catch (error) {
-      this.logger.error(`Error processing Kafka message: ${error.message}`);
-    }
+    // Дополнительная обработка (аналитика, уведомления и т.д.)
+    this.logger.log(`Processing message from Kafka: ${message.messageId}`);
   });
-
-  this.logger.log('ChatService subscribed to Kafka topics');
 }
 ```
 

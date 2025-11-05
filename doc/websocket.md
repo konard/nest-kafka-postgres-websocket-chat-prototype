@@ -151,97 +151,349 @@ async handleDisconnect(socket: Socket) {
 
 ### Отправка сообщения
 
-**Файл:** `packages/backend/src/socket/socket.gateway.ts:177-230`
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:359-446`
 
 ```typescript
-@SubscribeMessage('send-message')
-async handleSendMessage(
-  @MessageBody() data: SendMessageDto,
-  @ConnectedSocket() socket: Socket
-) {
-  try {
-    const userId = socket.data.userId;
-
-    // Создаем сообщение через ChatService
-    const message = await this.chatService.sendMessage(
-      data.chatId,
-      userId,
-      data.content
-    );
-
-    // Отправляем сообщение всем участникам чата
-    this.io.to(`chat-${data.chatId}`).emit('new-message', {
-      ...message,
-      deliveryStatus: MessageDeliveryStatus.SENT
-    });
-
-    // Отправляем в Kafka для обработки
-    await this.kafkaAdapter.publish('chat-messages', message);
-
-    return { success: true, messageId: message.id };
-  } catch (error) {
-    return { success: false, error: error.message };
+@SubscribeMessage('message')
+async handleMessage(client: Socket, payload: { chatId: string; content: string }) {
+  const requestId = uuidv4();
+  const userId = client.data?.user?.id;
+  if (!userId) {
+    this.logger.error('=== Message handling failed: No user ID ===');
+    return;
   }
+
+  this.logger.log(`=== Starting message handling (Request ID: ${requestId}) ===`);
+
+  // Получаем чат и проверяем права
+  const chat = await this.chatService.getChat(payload.chatId);
+
+  // Проверяем статус получателя
+  const recipientId = chat.participants.find((id: string) => id !== userId);
+
+  // Проверяем состояние комнаты
+  const roomName = `chat:${payload.chatId}`;
+  const room = this.io.sockets.adapter.rooms.get(roomName);
+
+  // Проверяем все сокеты получателя
+  const recipientSockets = Array.from(this.connectedClients.entries())
+    .filter(([_, client]) => client.userId === recipientId)
+    .map(([socketId]) => ({
+      socketId,
+      inRoom: room?.has(socketId) || false
+    }));
+
+  const isRecipientInChat = recipientSockets.some(socket => socket.inRoom);
+
+  // Определяем начальный статус сообщения
+  const initialStatus = isRecipientInChat 
+    ? MessageDeliveryStatus.DELIVERED 
+    : MessageDeliveryStatus.SENT;
+
+  // Сохраняем сообщение
+  const message = await this.chatService.saveMessage({
+    id: uuidv4(),
+    chatId: payload.chatId,
+    senderId: userId,
+    content: payload.content,
+    status: initialStatus,
+    createdAt: new Date()
+  });
+
+  // Отправляем сообщение в комнату чата
+  this.io.to(roomName).emit('message', message);
+
+  // Отправляем подтверждение отправителю
+  client.emit('message:ack', { messageId: message.id });
+
+  return message;
 }
 ```
 
 ### Присоединение к чату
 
-**Файл:** `packages/backend/src/socket/socket.gateway.ts:232-250`
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:508-597`
 
 ```typescript
-@SubscribeMessage('join-chat')
-async handleJoinChat(
-  @MessageBody() data: { chatId: string },
-  @ConnectedSocket() socket: Socket
-) {
-  const userId = socket.data.userId;
+@SubscribeMessage('chat:join')
+async handleChatJoin(client: Socket, payload: { chatId: string }) {
+  try {
+    const userId = client.data?.user?.id;
+    if (!userId) {
+      this.logger.error('=== Chat join failed: No user ID ===');
+      return;
+    }
 
-  // Проверяем доступ к чату
-  const hasAccess = await this.chatService.userHasAccessToChat(userId, data.chatId);
+    const requestId = uuidv4();
+    this.logger.log(`=== Starting chat join (Request ID: ${requestId}) ===`);
 
-  if (hasAccess) {
-    socket.join(`chat-${data.chatId}`);
+    // Проверяем существование чата
+    const chat = await this.chatService.getChat(payload.chatId);
 
-    // Загружаем историю сообщений
-    const messages = await this.chatService.getChatMessages(data.chatId);
+    if (!chat) {
+      throw new Error('Chat not found');
+    }
 
-    return { success: true, messages };
+    if (!chat.participants.includes(userId)) {
+      throw new Error('User is not a participant of this chat');
+    }
+
+    // Присоединяемся к комнате чата
+    const roomName = `chat:${payload.chatId}`;
+    await client.join(roomName);
+
+    // Получаем непрочитанные сообщения
+    const undeliveredMessages = await this.chatService.getUndeliveredMessages(
+      userId, 
+      payload.chatId
+    );
+    
+    // Обновляем статус сообщений на DELIVERED
+    for (const message of undeliveredMessages) {
+      await this.chatService.updateMessageStatus(
+        message.id, 
+        MessageDeliveryStatus.DELIVERED
+      );
+      
+      // Находим сокеты отправителя
+      const senderSockets = Array.from(this.connectedClients.entries())
+        .filter(([_, client]) => client.userId === message.senderId)
+        .map(([socketId]) => socketId);
+      
+      // Уведомляем отправителя об обновлении статуса
+      for (const socketId of senderSockets) {
+        this.io.to(socketId).emit('message:status', {
+          messageId: message.id,
+          status: MessageDeliveryStatus.DELIVERED
+        });
+      }
+    }
+
+    return {
+      status: 'ok',
+      message: 'Joined chat room successfully'
+    };
+  } catch (error) {
+    this.logger.error('Error in handleChatJoin:', error);
+    throw error;
   }
-
-  return { success: false, error: 'Access denied' };
 }
 ```
 
-### Индикатор набора текста
+### Выход из чата
 
-**Файл:** `packages/backend/src/socket/socket.gateway.ts:252-270`
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:599-664`
 
 ```typescript
-@SubscribeMessage('typing-start')
-handleTypingStart(
-  @MessageBody() data: { chatId: string },
-  @ConnectedSocket() socket: Socket
-) {
-  const userId = socket.data.userId;
+@SubscribeMessage('chat:leave')
+async handleChatLeave(client: Socket, payload: { chatId: string }): Promise<{ success: boolean }> {
+  const requestId = uuidv4();
+  const userId = client.data?.user?.id;
+  if (!userId) {
+    this.logger.error('=== Chat leave failed: No user ID ===');
+    return { success: false };
+  }
 
-  socket.to(`chat-${data.chatId}`).emit('user-typing', {
-    userId,
-    chatId: data.chatId
-  });
+  this.logger.log(`=== Starting chat leave (Request ID: ${requestId}) ===`);
+
+  const roomName = `chat:${payload.chatId}`;
+  
+  try {
+    // Покидаем комнату
+    await client.leave(roomName);
+
+    // Проверяем все сокеты этого пользователя
+    const userSockets = Array.from(this.connectedClients.entries())
+      .filter(([_, socket]) => socket.userId === userId)
+      .map(([socketId]) => this.io.sockets.sockets.get(socketId))
+      .filter((socket): socket is Socket => socket !== undefined);
+
+    // Отключаем все сокеты пользователя от этой комнаты
+    for (const socket of userSockets) {
+      await socket.leave(roomName);
+    }
+  } catch (error) {
+    this.logger.error(`Error during room leave:`, error);
+    return { success: false };
+  }
+
+  return { success: true };
 }
+```
 
-@SubscribeMessage('typing-stop')
-handleTypingStop(
-  @MessageBody() data: { chatId: string },
-  @ConnectedSocket() socket: Socket
-) {
-  const userId = socket.data.userId;
+### Закрепление сообщений (Pin)
 
-  socket.to(`chat-${data.chatId}`).emit('user-stopped-typing', {
-    userId,
-    chatId: data.chatId
-  });
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:727-753`
+
+```typescript
+@SubscribeMessage('message:pin')
+async handleMessagePin(client: Socket, payload: { messageId: string }) {
+  try {
+    const userId = client.data.user.id;
+    const pinnedMessage = await this.chatService.pinMessage(payload.messageId, userId);
+
+    // Notify all chat participants
+    const chatRoom = `chat:${pinnedMessage.chatId}`;
+    this.io.to(chatRoom).emit('message:pinned', pinnedMessage);
+
+    return { status: 'ok', message: pinnedMessage };
+  } catch (error) {
+    this.logger.error('Error in handleMessagePin:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+```
+
+### Открепление сообщений (Unpin)
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:755-781`
+
+```typescript
+@SubscribeMessage('message:unpin')
+async handleMessageUnpin(client: Socket, payload: { messageId: string }) {
+  try {
+    const userId = client.data.user.id;
+    const unpinnedMessage = await this.chatService.unpinMessage(payload.messageId, userId);
+
+    // Notify all chat participants
+    const chatRoom = `chat:${unpinnedMessage.chatId}`;
+    this.io.to(chatRoom).emit('message:unpinned', unpinnedMessage);
+
+    return { status: 'ok', message: unpinnedMessage };
+  } catch (error) {
+    this.logger.error('Error in handleMessageUnpin:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+```
+
+### Получение закрепленных сообщений
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:783-813`
+
+```typescript
+@SubscribeMessage('chat:get-pinned')
+async handleGetPinnedMessages(client: Socket, payload: { chatId: string }) {
+  try {
+    const userId = client.data.user.id;
+
+    // Verify user is participant
+    const chat = await this.chatService.getChat(payload.chatId);
+    if (!chat.participants.includes(userId)) {
+      return { status: 'error', message: 'User is not a participant of this chat' };
+    }
+
+    const pinnedMessages = await this.chatService.getPinnedMessages(payload.chatId);
+    return { status: 'ok', messages: pinnedMessages };
+  } catch (error) {
+    this.logger.error('Error in handleGetPinnedMessages:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+```
+
+### Пересылка сообщений (Forward)
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:815-850`
+
+```typescript
+@SubscribeMessage('message:forward')
+async handleMessageForward(client: Socket, payload: {
+  messageId: string;
+  toChatId: string;
+  additionalContent?: string;
+}) {
+  try {
+    const userId = client.data.user.id;
+    const forwardedMessage = await this.chatService.forwardMessage(
+      payload.messageId,
+      payload.toChatId,
+      userId,
+      payload.additionalContent
+    );
+
+    // Notify the target chat room about the new forwarded message
+    const targetChatRoom = `chat:${payload.toChatId}`;
+    this.io.to(targetChatRoom).emit('message', forwardedMessage);
+
+    return { status: 'ok', message: forwardedMessage };
+  } catch (error) {
+    this.logger.error('Error in handleMessageForward:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+```
+
+### Пересылка нескольких сообщений
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:852-890`
+
+```typescript
+@SubscribeMessage('message:forward-multiple')
+async handleMultipleMessageForward(client: Socket, payload: {
+  messageIds: string[];
+  toChatId: string;
+}) {
+  try {
+    const userId = client.data.user.id;
+    const forwardedMessages = await this.chatService.forwardMultipleMessages(
+      payload.messageIds,
+      payload.toChatId,
+      userId
+    );
+
+    // Notify the target chat room about all forwarded messages
+    const targetChatRoom = `chat:${payload.toChatId}`;
+    forwardedMessages.forEach(message => {
+      this.io.to(targetChatRoom).emit('message', message);
+    });
+
+    return { status: 'ok', messages: forwardedMessages };
+  } catch (error) {
+    this.logger.error('Error in handleMultipleMessageForward:', error);
+    return { status: 'error', message: error.message };
+  }
+}
+```
+
+### Отметка сообщения как прочитанного
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:666-725`
+
+```typescript
+@SubscribeMessage('message:read')
+async handleMessageRead(client: Socket, payload: { messageId: string }) {
+  try {
+    const userId = client.data.user.id;
+    const message = await this.chatService.getMessage(payload.messageId);
+
+    if (!message) {
+      return { status: 'error', message: 'Message not found' };
+    }
+
+    // Проверяем, что пользователь является участником чата
+    const chat = await this.chatService.getChat(message.chatId);
+    if (!chat.participants.includes(userId)) {
+      return { status: 'error', message: 'User is not a participant of this chat' };
+    }
+
+    // Обновляем статус сообщения
+    await this.chatService.updateMessageStatus(payload.messageId, MessageDeliveryStatus.READ);
+
+    const statusUpdate = {
+      messageId: payload.messageId,
+      status: MessageDeliveryStatus.READ,
+      timestamp: new Date().toISOString()
+    };
+
+    // Уведомляем отправителя об обновлении статуса
+    this.io.to(`user:${message.senderId}`).emit('message:status', statusUpdate);
+
+    return { status: 'ok' };
+  } catch (error) {
+    this.logger.error('Error in handleMessageRead:', error);
+    return { status: 'error', message: error.message };
+  }
 }
 ```
 
@@ -249,39 +501,145 @@ handleTypingStop(
 
 ### SocketService
 
-**Файл:** `packages/frontend/src/app/services/socketService.ts:3-200`
+**Файл:** `packages/frontend/src/app/services/socketService.ts:1-170`
 
-Централизованный сервис для управления WebSocket:
+Централизованный сервис для управления WebSocket соединением (Singleton паттерн):
 
 ```typescript
 class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
+  private connectionTimeout: number = 15000; // 15 секунд на подключение
+  private reconnectionAttempts: number = 3;
+  private currentAttempt: number = 0;
   private readonly backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
 
   private setupSocketConnection(): Socket {
+    if (this.socket?.connected) {
+      console.log('Socket already connected, returning existing socket');
+      return this.socket;
+    }
+
+    if (this.socket) {
+      console.log('Disconnecting existing socket');
+      this.socket.disconnect();
+      this.socket = null;
+    }
+
+    console.log('Creating new socket connection');
     this.socket = io(this.backendUrl, {
       auth: {
         token: this.token ? `Bearer ${this.token}` : null
       },
       transports: ['websocket'],
-      timeout: 15000,
+      timeout: this.connectionTimeout,
       reconnection: true,
-      reconnectionAttempts: 3,
+      reconnectionAttempts: this.reconnectionAttempts,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       autoConnect: true
     });
 
-    // Обработчики событий
-    this.socket.on('connect', this.handleConnect);
-    this.socket.on('disconnect', this.handleDisconnect);
-    this.socket.on('error', this.handleError);
+    // Обработчики событий подключения
+    this.socket.on('connect', () => {
+      console.log('Socket connected successfully');
+      this.currentAttempt = 0;
+    });
+
+    this.socket.on('connection:established', (data) => {
+      console.log('Connection established with server:', data);
+    });
+
+    this.socket.on('connect_error', (error) => {
+      // Если пользователь не найден - сессия истекла
+      if (error.message === 'User not found') {
+        console.log('Session expired, stopping reconnection attempts...');
+        
+        // Отключаем автоматическое переподключение
+        if (this.socket) {
+          this.socket.io.opts.reconnection = false;
+          this.socket.disconnect();
+        }
+        
+        // Очищаем состояние
+        this.socket = null;
+        this.token = null;
+        this.currentAttempt = 0;
+        
+        // Перенаправляем на страницу логина
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login?reason=session_expired';
+        }
+        return;
+      }
+
+      this.currentAttempt++;
+      
+      if (this.currentAttempt >= this.reconnectionAttempts) {
+        console.error('Max reconnection attempts reached');
+        this.disconnect();
+      } else {
+        // Пробуем переподключиться с экспоненциальной задержкой
+        setTimeout(() => {
+          this.socket?.connect();
+        }, 1000 * Math.pow(2, this.currentAttempt));
+      }
+    });
+
+    this.socket.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason);
+      
+      // Если отключение не было намеренным, пробуем переподключиться
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        this.socket?.connect();
+      }
+    });
 
     return this.socket;
   }
+
+  public connect(token: string): Socket {
+    console.log('Connecting with token');
+    this.token = token;
+    return this.setupSocketConnection();
+  }
+
+  public disconnect(): void {
+    console.log('Disconnecting socket');
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+    }
+    this.token = null;
+    this.currentAttempt = 0;
+  }
+
+  public getSocket(): Socket | null {
+    return this.socket;
+  }
+
+  public isConnected(): boolean {
+    return this.socket?.connected || false;
+  }
+
+  public reconnect(): void {
+    if (this.token) {
+      this.connect(this.token);
+    }
+  }
 }
+
+// Создаем единственный экземпляр сервиса (Singleton)
+const socketService = new SocketService();
+export default socketService;
 ```
+
+**Основные методы:**
+- `connect(token: string): Socket` - подключение с JWT токеном
+- `disconnect(): void` - отключение от сервера
+- `getSocket(): Socket | null` - получение socket.io клиента
+- `isConnected(): boolean` - проверка статуса подключения
+- `reconnect(): void` - переподключение с сохраненным токеном
 
 ### useSocket Hook
 
@@ -423,23 +781,48 @@ private startCleanupInterval() {
 
 ### Heartbeat механизм
 
-Клиент периодически отправляет ping для поддержания соединения:
+Socket.IO автоматически управляет heartbeat механизмом через встроенные ping/pong события.
+Дополнительная настройка heartbeat происходит на уровне конфигурации сервера:
 
 ```typescript
-// Frontend
-setInterval(() => {
-  socket.emit('ping');
-}, 30000);
+// Backend - настройка в socket.adapter.ts
+pingInterval: 25000,  // Интервал между ping (по умолчанию)
+pingTimeout: 60000    // Timeout для pong ответа
+```
 
-// Backend
-@SubscribeMessage('ping')
-handlePing(@ConnectedSocket() socket: Socket) {
-  const client = this.connectedClients.get(socket.id);
-  if (client) {
-    client.lastActivity = new Date();
+### Очистка неактивных соединений
+
+**Файл:** `packages/backend/src/socket/socket.gateway.ts:892-930`
+
+Периодическая проверка и удаление мертвых соединений:
+
+```typescript
+private cleanupDeadConnections() {
+  try {
+    this.logger.log('=== Running periodic connection cleanup ===');
+    
+    let cleaned = 0;
+    const now = new Date();
+    const maxInactiveTime = 5 * 60 * 1000; // 5 минут
+
+    for (const [userId, client] of this.connectedClients.entries()) {
+      const isInactive = now.getTime() - client.lastActivity.getTime() > maxInactiveTime;
+      if (!client.socket.connected || isInactive) {
+        client.socket.disconnect(true);
+        this.connectedClients.delete(userId);
+        cleaned++;
+        this.logger.log(`Cleaned up connection for user ${userId}`);
+      }
+    }
+
+    this.logger.log(`Cleaned up ${cleaned} dead connections`);
+  } catch (error) {
+    this.logger.error('Cleanup error:', error);
   }
-  return { event: 'pong', data: Date.now() };
 }
+
+// Запуск очистки каждые 30 секунд
+this.cleanupInterval = setInterval(() => this.cleanupDeadConnections(), 30000);
 ```
 
 ## Graceful Shutdown
@@ -576,6 +959,36 @@ describe('WebSocket E2E', () => {
 });
 ```
 
+## Список всех WebSocket событий
+
+### События от клиента к серверу
+
+| Событие | Payload | Описание |
+|---------|---------|----------|
+| `message` | `{ chatId, content }` | Отправка нового сообщения |
+| `chat:get` | `{ recipientId }` | Получение/создание чата с пользователем |
+| `chat:join` | `{ chatId }` | Присоединение к комнате чата |
+| `chat:leave` | `{ chatId }` | Выход из комнаты чата |
+| `users:list` | - | Получение списка пользователей с online статусами |
+| `message:read` | `{ messageId }` | Отметка сообщения как прочитанного |
+| `message:pin` | `{ messageId }` | Закрепление сообщения |
+| `message:unpin` | `{ messageId }` | Открепление сообщения |
+| `chat:get-pinned` | `{ chatId }` | Получение закрепленных сообщений чата |
+| `message:forward` | `{ messageId, toChatId, additionalContent? }` | Пересылка сообщения |
+| `message:forward-multiple` | `{ messageIds[], toChatId }` | Пересылка нескольких сообщений |
+
+### События от сервера к клиенту
+
+| Событие | Payload | Описание |
+|---------|---------|----------|
+| `connection:established` | `{ userId }` | Подтверждение подключения |
+| `message` | `ChatMessage` | Новое сообщение в чате |
+| `message:ack` | `{ messageId }` | Подтверждение отправки сообщения |
+| `message:status` | `{ messageId, status }` | Обновление статуса доставки |
+| `message:pinned` | `ChatMessage` | Сообщение было закреплено |
+| `message:unpinned` | `ChatMessage` | Сообщение было откреплено |
+| `users:update` | `{ userId, isOnline }` | Обновление online статуса пользователя |
+
 ## Производительность
 
 ### Оптимизации
@@ -584,14 +997,23 @@ describe('WebSocket E2E', () => {
 2. **Compression**: Включение сжатия для уменьшения трафика
 3. **Throttling**: Ограничение частоты событий от клиента
 4. **Rooms**: Использование комнат для эффективной рассылки сообщений
+5. **Selective delivery**: Сообщения отправляются только активным участникам чата
 
 ### Настройки транспорта
 
 ```typescript
 // Предпочтительное использование WebSocket
-transports: ['websocket', 'polling']
+transports: ['websocket']
 
-// Настройки ping/pong
-pingInterval: 25000,
-pingTimeout: 60000
+// Настройки ping/pong (автоматические в Socket.IO)
+pingInterval: 25000,  // 25 секунд
+pingTimeout: 60000    // 60 секунд
 ```
+
+### Масштабируемость
+
+Текущая реализация поддерживает:
+- Множественные соединения одного пользователя (разные устройства/вкладки)
+- Отслеживание активности пользователя в конкретных чатах
+- Умное определение статуса доставки на основе присутствия в комнате
+- Автоматическая очистка неактивных соединений

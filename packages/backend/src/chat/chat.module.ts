@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ChatService } from './chat.service';
+import { MessageCacheService } from './message-cache.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Message } from './entities/message.entity';
 import { Chat } from './entities/chat.entity';
@@ -16,7 +17,8 @@ import { UserModule } from '../user/user.module';
   ],
   providers: [
     ChatService,
+    MessageCacheService,
   ],
-  exports: [ChatService],
+  exports: [ChatService, MessageCacheService],
 })
 export class ChatModule {}

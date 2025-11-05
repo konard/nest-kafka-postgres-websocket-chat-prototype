@@ -19,9 +19,12 @@ Frontend URL: http://localhost:3000
 - ✅ Persistent authentication (token stored in localStorage)
 
 ### 2. User Presence Management
-- ✅ Real-time online/offline status tracking
+- ✅ Real-time online/offline status tracking powered by Redis
 - ✅ Automatic status updates on connection/disconnection
 - ✅ Visual indicators for user availability
+- ✅ Multi-device support (tracks all user's sockets)
+- ✅ Last seen timestamp tracking
+- ✅ Scalable presence across multiple server instances
 
 ### 3. Real-Time Messaging
 - ✅ Send text messages in real-time
@@ -49,9 +52,12 @@ Frontend URL: http://localhost:3000
 ### 7. Backend Architecture
 - ✅ NestJS modular architecture
 - ✅ TypeORM with PostgreSQL for data persistence
+- ✅ Redis for caching, sessions, and user presence
 - ✅ Kafka integration for message processing
-- ✅ Socket.io for real-time communication
+- ✅ Socket.io for real-time communication with Redis adapter
 - ✅ JWT-based WebSocket authentication
+- ✅ Rate limiting with Redis
+- ✅ Message caching for performance
 
 ## TODO: Missing Chat Scenarios
 
@@ -210,6 +216,7 @@ Frontend URL: http://localhost:3000
 ### Backend
 - NestJS framework
 - PostgreSQL with TypeORM
+- Redis for caching, sessions, and presence
 - Apache Kafka for message queue
 - Socket.io for real-time events
 - JWT authentication
@@ -226,6 +233,7 @@ Frontend URL: http://localhost:3000
 - Docker & Docker Compose
 - Node.js 18+
 - PostgreSQL
+- Redis
 - Apache Kafka
 
 ### Environment Variables

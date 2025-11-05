@@ -2,15 +2,19 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { ServerOptions } from 'socket.io';
 import { ConfigService } from '@nestjs/config';
 import { INestApplicationContext, Logger } from '@nestjs/common';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { RedisService } from '../redis/redis.service';
 
 export class SocketAdapter extends IoAdapter {
   private readonly configService: ConfigService;
+  private readonly redisService: RedisService;
   private readonly logger = new Logger(SocketAdapter.name);
   private server: any;
 
   constructor(app: INestApplicationContext) {
     super(app);
     this.configService = app.get(ConfigService);
+    this.redisService = app.get(RedisService);
   }
 
   createIOServer(port: number, options?: ServerOptions): any {
@@ -41,6 +45,9 @@ export class SocketAdapter extends IoAdapter {
 
     this.logger.log('Socket.IO server options:', JSON.stringify(serverOptions, null, 2));
     this.server = super.createIOServer(port, serverOptions);
+    
+    // Настраиваем Redis Adapter для масштабирования
+    this.setupRedisAdapter();
     
     // Добавляем логирование для всех событий сервера
     this.server.on('connection_error', (err: any) => {
@@ -73,6 +80,25 @@ export class SocketAdapter extends IoAdapter {
     });
 
     return this.server;
+  }
+
+  private setupRedisAdapter(): void {
+    try {
+      if (!this.redisService.isReady()) {
+        this.logger.warn('Redis is not ready, skipping Redis adapter setup');
+        return;
+      }
+
+      const pubClient = this.redisService.getClient();
+      const subClient = this.redisService.getSubscriber();
+
+      const redisAdapter = createAdapter(pubClient, subClient);
+      this.server.adapter(redisAdapter);
+
+      this.logger.log('Redis adapter configured for Socket.IO');
+    } catch (error) {
+      this.logger.error('Failed to setup Redis adapter, continuing without it:', error);
+    }
   }
 
   async dispose() {

@@ -11,6 +11,7 @@ import { Logger, UseFilters } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from '../auth/auth.service';
 import { ChatService } from '../chat/chat.service';
+import { UserPresenceService } from '../user/user-presence.service';
 import { ChatMessage, MessageDeliveryStatus } from '@webchat/common';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
@@ -40,6 +41,7 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     private authService: AuthService,
     private chatService: ChatService,
     private configService: ConfigService,
+    private userPresenceService: UserPresenceService,
   ) {}
 
   public async closeServer() {
@@ -208,6 +210,14 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       client.join(`user:${user.id}`);
       this.logger.log(`Client joined room user:${user.id}`);
 
+      // Устанавливаем статус онлайн в Redis
+      try {
+        await this.userPresenceService.setOnline(user.id, client.id);
+        this.logger.log(`User ${user.id} status set to online in Redis`);
+      } catch (error) {
+        this.logger.error('Failed to set user online in Redis:', error);
+      }
+
       this.logger.log('Connected clients after:', Array.from(this.connectedClients.entries()).map(([id, client]) => ({
         socketId: id,
         userId: client.userId,
@@ -273,6 +283,16 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
           .filter(([_, client]) => client.userId === clientInfo.userId)
           .map(([id]) => id)
       });
+
+      // Устанавливаем статус оффлайн в Redis
+      (async () => {
+        try {
+          await this.userPresenceService.setOffline(clientInfo.userId, client.id);
+          this.logger.log(`User ${clientInfo.userId} status updated in Redis`);
+        } catch (error) {
+          this.logger.error('Failed to set user offline in Redis:', error);
+        }
+      })();
 
       // Если это было последнее соединение пользователя, оповещаем других
       if (!hasOtherConnections) {
@@ -889,6 +909,47 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     }
   }
 
+  @SubscribeMessage('user:get-online')
+  async handleGetOnlineUsers(client: Socket) {
+    try {
+      const userId = client.data?.user?.id;
+      if (!userId) {
+        return { status: 'error', message: 'Unauthorized' };
+      }
+
+      const onlineUsers = await this.userPresenceService.getOnlineUsers();
+      
+      return { 
+        status: 'ok', 
+        users: onlineUsers,
+        count: onlineUsers.length 
+      };
+    } catch (error) {
+      this.logger.error('Error getting online users:', error);
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('user:get-presence')
+  async handleGetUserPresence(client: Socket, payload: { userId: string }) {
+    try {
+      const requestingUserId = client.data?.user?.id;
+      if (!requestingUserId) {
+        return { status: 'error', message: 'Unauthorized' };
+      }
+
+      const presence = await this.userPresenceService.getUserPresence(payload.userId);
+      
+      return { 
+        status: 'ok', 
+        presence 
+      };
+    } catch (error) {
+      this.logger.error('Error getting user presence:', error);
+      return { status: 'error', message: error.message };
+    }
+  }
+
   private cleanupDeadConnections() {
     try {
       this.logger.log('=== Running periodic connection cleanup ===');
@@ -923,6 +984,11 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       this.logger.log(`Cleaned up ${cleaned} dead connections`);
       this.logger.log(`Remaining connections: ${this.connectedClients.size}`);
       this.logger.log('Remaining clients:', Array.from(this.connectedClients.keys()));
+
+      // Также очищаем устаревшие данные в Redis
+      this.userPresenceService.cleanupExpiredPresence().catch(error => {
+        this.logger.error('Failed to cleanup expired presence in Redis:', error);
+      });
     } catch (error) {
       this.logger.error('=== Cleanup error ===');
       this.logger.error('Error:', error);
