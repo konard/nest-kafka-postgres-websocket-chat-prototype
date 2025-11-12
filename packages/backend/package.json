@@ -4,6 +4,7 @@
   "description": "WebChat Backend",
   "main": "dist/main.js",
   "scripts": {
+    "pretest": "npm run -w @webchat/common build",
     "build": "nest build --config ./nest-cli.json",
     "format": "prettier --write \"src/**/*.ts\"",
     "dev": "nest start --watch",
