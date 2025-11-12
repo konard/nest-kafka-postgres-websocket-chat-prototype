@@ -309,6 +309,7 @@ Comprehensive documentation is available in the `/doc` directory:
 - 📦 [Database Schema](doc/postgres.md) - Data models
 - 🎯 [NestJS Backend](doc/nest.md) - Backend architecture
 - ⚛️ [Next.js Frontend](doc/next.md) - Frontend architecture
+ - 🎬🎮📚 [Genres Research](researches/genres/README.md) - Popular genres across books, movies/series, and games
 
 ## 🤝 Contributing
 
