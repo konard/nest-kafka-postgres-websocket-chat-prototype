@@ -22,13 +22,16 @@ while IFS= read -r url; do
   [ -z "$url" ] && continue
   code=$(curl -sS -o /dev/null -L -w "%{http_code}" --max-time 15 "$url" || echo "000")
   line="$code $url"
-  if [[ "$code" =~ ^2|3 ]]; then
-    echo "$line" >> "$out_ok"
-    ok=$((ok+1))
-  else
-    echo "$line" >> "$out_err"
-    bad=$((bad+1))
-  fi
+  case "$code" in
+    2*|3*)
+      echo "$line" >> "$out_ok"
+      ok=$((ok+1))
+      ;;
+    *)
+      echo "$line" >> "$out_err"
+      bad=$((bad+1))
+      ;;
+  esac
 done <<< "$links"
 
 echo "" >> "$out_ok"

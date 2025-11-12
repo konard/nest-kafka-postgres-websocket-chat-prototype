@@ -32,10 +32,9 @@
 
 - Steam — Year in Review (обзор трендов и вовлечённости):
   - https://store.steampowered.com/yearinreview/
-- Newzoo — рыночные отчёты по жанрам и выручке:
-  - https://newzoo.com/
+- Video game genre — обзор жанров, классификация (Wikipedia):
+  - https://en.wikipedia.org/wiki/Video_game_genre
 - Statista — предпочтения игроков по жанрам:
   - https://www.statista.com/topics/8689/video-game-genres/
 
 Примечание: популярность различается по платформам (PC/консоли/мобайл) и регионам. Здесь представлена агрегированная картина для PC/консолей с фокусом на последние годы.
-

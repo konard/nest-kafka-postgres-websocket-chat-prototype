@@ -21,7 +21,7 @@
 | Период | Платформа | Регион | Метрика                | Жанр    | Значение | Источник |
 |--------|-----------|--------|------------------------|---------|----------|----------|
 | 2023   | PC        | Global | Доля времени/MAU       | Shooter |          | [Steam Year in Review](https://store.steampowered.com/yearinreview/) |
-| 2023   | Console   | Global | Выручка по жанрам      | Action  |          | [Newzoo](https://newzoo.com/) |
+| 2023   | Console   | Global | Выручка по жанрам      | Action  |          | [Steam Year in Review](https://store.steampowered.com/yearinreview/) |
 
 > Подсказки:
 > - Указывайте, что именно измеряете (доля кассы, выручка, MAU, время, предпочтение аудитории по опросам и т.д.).
