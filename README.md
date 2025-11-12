@@ -310,6 +310,7 @@ Comprehensive documentation is available in the `/doc` directory:
 - 🎯 [NestJS Backend](doc/nest.md) - Backend architecture
 - ⚛️ [Next.js Frontend](doc/next.md) - Frontend architecture
  - 🎬🎮📚 [Genres Research](researches/genres/README.md) - Popular genres across books, movies/series, and games
+ - 📄 Source file from the issue: [genres/list.md](genres/list.md)
 
 ## 🤝 Contributing
 
