@@ -19,6 +19,5 @@
 
 - Goodreads Choice Awards (популярные книги и жанры):
   - https://www.goodreads.com/choiceawards
-- Publisher/market reports (жанровые срезы по продажам):
-  - https://www.statista.com/topics/1174/book-market/
-
+- Publishers Weekly / NPD BookScan (жанровые срезы по продажам):
+  - https://www.publishersweekly.com/
